@@ -13,16 +13,41 @@ const sendMessage = () => {
   if (!input.value.trim() || isStreaming.value) return;
 
   const userMsg = input.value;
-  // Add user message to the feed
+  
+  // Push User Message
   events.value.push({ type: 'USER', data: { content: userMsg } });
+  
+  // Create a new Thought Group
+  events.value.push({ 
+    type: 'THOUGHT_GROUP', 
+    data: { 
+      items: [], 
+      isExpanded: false, // Default collapsed
+      isThinking: true   // Still receiving thought events
+    } 
+  });
+  
   input.value = '';
   isStreaming.value = true;
 
   const eventSource = new EventSource(`/api/agent/chat?prompt=${encodeURIComponent(userMsg)}`);
 
-  // Helper to push event
-  const pushEvent = (type: string, data: any) => {
+  // Helper to push top-level event (ANSWER, ERROR, USER, etc.)
+  const pushTopLevelEvent = (type: string, data: any) => {
     events.value.push({ type, data });
+    // Auto scroll
+    nextTick(() => {
+      const container = document.querySelector('.chat-container');
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+  };
+
+  // Helper to push to the current thought group
+  const pushToThoughtGroup = (type: string, data: any) => {
+    const lastGroup = events.value[events.value.length - 1];
+    if (lastGroup && lastGroup.type === 'THOUGHT_GROUP') {
+      lastGroup.data.items.push({ type, data });
+    }
     // Auto scroll
     nextTick(() => {
       const container = document.querySelector('.chat-container');
@@ -32,59 +57,111 @@ const sendMessage = () => {
 
   eventSource.addEventListener('THINKING', (e) => {
     const data = JSON.parse(e.data);
-    pushEvent('THINKING', data);
+    pushToThoughtGroup('THINKING', data);
   });
 
   eventSource.addEventListener('ACTION', (e) => {
-    const data = JSON.parse(e.data);
+    const rawData = JSON.parse(e.data);
+    
+    // Adapt backend AgentEvent format (meta -> tool, content -> arguments) to frontend format
+    const data = {
+      ...rawData,
+      tool: rawData.tool || rawData.meta,
+      arguments: rawData.arguments || rawData.content
+    };
     
     // Check for terminate tool
-    if (data.tool === 'terminate') {
+    let answerContent = null;
+    if (data.tool && data.tool.toLowerCase() === 'terminate') {
+      // 1. Mark thinking as done immediately
+      const lastGroup = events.value[events.value.length - 1];
+      if (lastGroup && lastGroup.type === 'THOUGHT_GROUP') {
+        lastGroup.data.isThinking = false;
+      }
+
+      // 2. Try to extract answer
       try {
-        // arguments might be an object or a JSON string
         const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
         
-        if (args && args.reason) {
-          // Push the final answer directly
-          pushEvent('ANSWER', { content: args.reason });
+        if (typeof args === 'string') {
+          answerContent = args;
+        } else if (args && typeof args === 'object') {
+          answerContent = args.reason || args.answer || args.content || args.result || args.message;
         }
       } catch (err) {
-        console.error('Failed to parse terminate args:', err);
+        // If parsing fails, treat arguments as raw content string
+        if (typeof data.arguments === 'string') {
+          answerContent = data.arguments;
+        }
       }
-      // Do NOT push the ACTION event for terminate to hide it from UI
-      return;
+
+      // 3. If we still don't have structured content but have arguments, use raw arguments
+      if (!answerContent && data.arguments) {
+         answerContent = typeof data.arguments === 'object' ? JSON.stringify(data.arguments) : String(data.arguments);
+      }
     }
 
-    pushEvent('ACTION', data);
+    // Always log the action to the thought group first
+    pushToThoughtGroup('ACTION', data);
+
+    // If we found an answer content, push it as a top-level event
+    if (answerContent) {
+      pushTopLevelEvent('ANSWER', { content: answerContent });
+      
+      // Close stream as we have the final answer
+      eventSource.close();
+      isStreaming.value = false;
+    }
   });
 
   eventSource.addEventListener('RESULT', (e) => {
     const data = JSON.parse(e.data);
-    pushEvent('RESULT', data);
+    pushToThoughtGroup('RESULT', data);
   });
 
+  // Fallback for direct answer (if any)
   eventSource.addEventListener('ANSWER', (e) => {
     const data = JSON.parse(e.data);
-    pushEvent('ANSWER', data);
+    // Finish thinking
+    const lastGroup = events.value[events.value.length - 1];
+    if (lastGroup && lastGroup.type === 'THOUGHT_GROUP') {
+      lastGroup.data.isThinking = false;
+    }
+    pushTopLevelEvent('ANSWER', data);
   });
 
   eventSource.addEventListener('ERROR', (e) => {
-    // Some error events might be plain text
     let data = e.data;
     try { data = JSON.parse(e.data); } catch (_) {}
     
-    pushEvent('ERROR', data);
+    // Finish thinking with error state
+    const lastGroup = events.value[events.value.length - 1];
+    if (lastGroup && lastGroup.type === 'THOUGHT_GROUP') {
+      lastGroup.data.isThinking = false;
+      lastGroup.data.hasError = true; // Add error flag
+    }
+    
+    pushTopLevelEvent('ERROR', data);
     eventSource.close();
     isStreaming.value = false;
   });
 
   eventSource.onerror = (err) => {
-    // Only log actual errors, not normal close events
     if (eventSource.readyState !== EventSource.CLOSED) {
       console.error('SSE Error:', err);
     }
     eventSource.close();
     isStreaming.value = false;
+    
+    // Mark thinking as done with error if connection fails
+    const lastGroup = events.value[events.value.length - 1];
+    if (lastGroup && lastGroup.type === 'THOUGHT_GROUP') {
+      if (lastGroup.data.isThinking) {
+         lastGroup.data.hasError = true;
+         pushTopLevelEvent('ERROR', 'Connection lost or timed out. Please try again.');
+      }
+      lastGroup.data.isThinking = false;
+    }
   };
 };
 
@@ -121,49 +198,85 @@ const goBack = () => router.push('/');
             </div>
           </div>
 
-          <!-- AI Thinking -->
-          <div v-if="evt.type === 'THINKING'" class="flex gap-4 mb-4 opacity-70">
-            <div class="w-8 h-8 flex items-center justify-center">
-              <Icon icon="lucide:brain-circuit" class="w-5 h-5 text-text-muted" />
-            </div>
-            <div class="flex-1 bg-surface border border-border p-3 rounded text-xs font-mono text-text-muted">
-              <span class="text-xs uppercase tracking-widest mb-1 block">Thinking</span>
-              {{ evt.data.thought || evt.data }}
-            </div>
-          </div>
+          <!-- Thought Group (Accordion) -->
+          <div v-if="evt.type === 'THOUGHT_GROUP'" class="mb-8">
+            <div class="border border-border rounded-lg overflow-hidden bg-surface/30">
+              <!-- Header / Toggle -->
+              <button 
+                @click="evt.data.isExpanded = !evt.data.isExpanded"
+                class="w-full flex items-center justify-between px-4 py-3 bg-surface hover:bg-surface-highlight transition-colors text-xs font-mono uppercase tracking-wider"
+                :class="evt.data.hasError ? 'text-red-400' : 'text-text-muted'"
+              >
+                <div class="flex items-center gap-2">
+                  <Icon 
+                    :icon="evt.data.hasError ? 'lucide:alert-circle' : 'lucide:brain-circuit'" 
+                    class="w-4 h-4" 
+                    :class="evt.data.isThinking ? 'animate-pulse text-primary' : (evt.data.hasError ? 'text-red-500' : '')" 
+                  />
+                  <span>{{ evt.data.isThinking ? 'Thinking Process...' : (evt.data.hasError ? 'Process Failed' : 'Thinking Process') }}</span>
+                  <span 
+                    class="px-1.5 py-0.5 rounded text-[10px] border"
+                    :class="evt.data.hasError ? 'bg-red-900/20 text-red-400 border-red-900/30' : 'bg-surface-highlight text-text-muted border-border'"
+                  >
+                    {{ evt.data.items.length }} Steps
+                  </span>
+                </div>
+                <Icon :icon="evt.data.isExpanded ? 'lucide:chevron-up' : 'lucide:chevron-down'" class="w-4 h-4" />
+              </button>
 
-          <!-- AI Action -->
-          <div v-if="evt.type === 'ACTION'" class="flex gap-4 mb-4">
-            <div class="w-8 h-8 flex items-center justify-center">
-              <Icon icon="lucide:hammer" class="w-5 h-5 text-orange-400" />
-            </div>
-            <div class="flex-1 border-l-2 border-orange-400 pl-4 py-1">
-              <div class="text-orange-400 text-xs font-bold uppercase mb-1">Executing Tool</div>
-              <div class="font-mono text-sm">{{ evt.data.tool }}</div>
-            </div>
-          </div>
+              <!-- Expanded Content -->
+              <div v-if="evt.data.isExpanded" class="p-4 space-y-4 border-t border-border bg-[#0d0d0d]">
+                <div v-for="(item, i) in evt.data.items" :key="i" class="animate-fade-in">
+                  
+                  <!-- Thinking Step -->
+                  <div v-if="item.type === 'THINKING'" class="flex gap-3">
+                    <div class="w-6 h-6 flex items-center justify-center shrink-0 mt-0.5">
+                      <div class="w-1.5 h-1.5 rounded-full bg-text-muted"></div>
+                    </div>
+                    <div class="text-xs text-text-muted font-mono leading-relaxed">
+                      {{ item.data.thought || item.data.content || item.data }}
+                    </div>
+                  </div>
 
-          <!-- AI Result -->
-          <div v-if="evt.type === 'RESULT'" class="flex gap-4 mb-4">
-            <div class="w-8 h-8 flex items-center justify-center">
-              <Icon icon="lucide:check-circle" class="w-5 h-5 text-green-400" />
-            </div>
-            <div class="flex-1 bg-black/50 p-3 rounded border border-green-900/50 font-mono text-xs text-green-300 overflow-x-auto">
-              {{ evt.data.output || evt.data }}
-            </div>
-          </div>
+                  <!-- Action Step -->
+                  <div v-if="item.type === 'ACTION'" class="flex gap-3">
+                    <div class="w-6 h-6 flex items-center justify-center shrink-0">
+                      <Icon icon="lucide:hammer" class="w-3.5 h-3.5 text-orange-400" />
+                    </div>
+                    <div class="flex-1 bg-orange-900/10 border border-orange-900/30 rounded px-3 py-2">
+                      <div class="flex items-center gap-2 text-orange-400 text-xs font-bold uppercase mb-1">
+                        <span>Tool Call</span>
+                        <span class="text-white/30">•</span>
+                        <span class="font-mono text-orange-300">{{ item.data.tool }}</span>
+                      </div>
+                      <div class="font-mono text-xs text-text-muted truncate opacity-70">
+                        args: {{ typeof item.data.arguments === 'object' ? JSON.stringify(item.data.arguments) : item.data.arguments }}
+                      </div>
+                    </div>
+                  </div>
 
-          <!-- AI Answer -->
-          <div v-if="evt.type === 'ANSWER'" class="flex gap-4 mb-8">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10 border border-primary/20">
-              
-              <!-- Dynamic Icon for Agent Answer -->
-              <div v-if="isStreaming && idx === events.length - 1" class="relative w-5 h-5 flex items-center justify-center">
-                 <Icon icon="lucide:loader-2" class="w-5 h-5 text-primary animate-spin" />
-                 <div class="absolute inset-0 bg-primary/30 blur-[4px] animate-pulse rounded-full"></div>
+                  <!-- Result Step -->
+                  <div v-if="item.type === 'RESULT'" class="flex gap-3">
+                    <div class="w-6 h-6 flex items-center justify-center shrink-0">
+                      <Icon icon="lucide:check" class="w-3.5 h-3.5 text-green-400" />
+                    </div>
+                    <div class="flex-1 bg-green-900/5 border border-green-900/20 rounded px-3 py-2">
+                      <div class="text-green-500 text-[10px] font-bold uppercase mb-1">Result</div>
+                      <div class="font-mono text-xs text-text-muted/80 overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto">
+                        {{ item.data.content || item.data.output || item.data }}
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
               </div>
-              <Icon v-else icon="lucide:sparkles" class="w-5 h-5 text-primary" />
-              
+            </div>
+          </div>
+
+          <!-- AI Answer (Final) -->
+          <div v-if="evt.type === 'ANSWER'" class="flex gap-4 mb-8 animate-fade-in">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-primary/10 border border-primary/20">
+              <Icon icon="lucide:sparkles" class="w-5 h-5 text-primary" />
             </div>
             <div class="max-w-[80%] text-text-main prose">
               <div v-html="renderMarkdown(evt.data.content || evt.data)"></div>
