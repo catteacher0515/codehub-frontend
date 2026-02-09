@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue';
+import { ref, nextTick, onMounted, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useRouter } from 'vue-router';
 import { renderMarkdown } from '@/utils/markdown';
@@ -9,7 +9,102 @@ const input = ref('');
 const events = ref<any[]>([]);
 const isStreaming = ref(false);
 
-  const quickActions = [
+// --- Session Management ---
+interface ChatSession {
+  id: string;
+  title: string;
+  timestamp: number;
+  events: any[];
+}
+
+const sessions = ref<ChatSession[]>([]);
+const currentSessionId = ref<string>('');
+const isSidebarOpen = ref(true);
+
+const generateId = () => Math.random().toString(36).substring(2, 15);
+
+const loadSessions = () => {
+  const stored = localStorage.getItem('codemanus_sessions');
+  if (stored) {
+    try {
+      sessions.value = JSON.parse(stored);
+    } catch (e) {
+      console.error('Failed to load sessions', e);
+    }
+  }
+};
+
+const saveSessions = () => {
+  localStorage.setItem('codemanus_sessions', JSON.stringify(sessions.value));
+};
+
+const createNewSession = () => {
+  const id = generateId();
+  const newSession: ChatSession = {
+    id,
+    title: 'New Investigation',
+    timestamp: Date.now(),
+    events: []
+  };
+  sessions.value.unshift(newSession);
+  currentSessionId.value = id;
+  events.value = [];
+  saveSessions();
+};
+
+const selectSession = (id: string) => {
+  if (isStreaming.value) return; // Prevent switching while streaming
+  const session = sessions.value.find(s => s.id === id);
+  if (session) {
+    currentSessionId.value = id;
+    events.value = session.events;
+  }
+};
+
+const deleteSession = (id: string, e: Event) => {
+  e.stopPropagation();
+  const index = sessions.value.findIndex(s => s.id === id);
+  if (index !== -1) {
+    sessions.value.splice(index, 1);
+    saveSessions();
+    if (currentSessionId.value === id) {
+      if (sessions.value.length > 0) {
+        selectSession(sessions.value[0].id);
+      } else {
+        createNewSession();
+      }
+    }
+  }
+};
+
+// Auto-save events to current session
+watch(events, (newEvents) => {
+  if (!currentSessionId.value) return;
+  const session = sessions.value.find(s => s.id === currentSessionId.value);
+  if (session) {
+    session.events = newEvents;
+    // Update title if it's the first user message and title is default
+    if (session.title === 'New Investigation' && newEvents.length > 0) {
+      const firstUserMsg = newEvents.find(e => e.type === 'USER');
+      if (firstUserMsg) {
+        session.title = firstUserMsg.data.content.slice(0, 30) + (firstUserMsg.data.content.length > 30 ? '...' : '');
+      }
+    }
+    saveSessions();
+  }
+}, { deep: true });
+
+onMounted(() => {
+  loadSessions();
+  if (sessions.value.length === 0) {
+    createNewSession();
+  } else {
+    // Select the most recent one
+    selectSession(sessions.value[0].id);
+  }
+});
+
+const quickActions = [
     { label: 'Search Web', desc: 'Find latest tech info', icon: 'lucide:globe', prompt: 'Search the web for the latest news on...' },
     { label: 'Analyze Repo', desc: 'Understand code structure', icon: 'lucide:file-code', prompt: 'Analyze the current project structure...' },
     { label: 'Debug Issue', desc: 'Trace errors & fix bugs', icon: 'lucide:bug', prompt: 'Help me debug this error...' },
@@ -182,11 +277,52 @@ const goBack = () => router.push('/');
 </script>
 
 <template>
-  <div class="h-screen flex flex-col bg-background text-text-main">
-    <!-- Header -->
-    <header class="h-16 border-b border-border flex items-center px-6 justify-between bg-surface/50 backdrop-blur">
-      <div class="flex items-center gap-4">
-        <button @click="goBack" class="hover:text-primary transition-colors">
+  <div class="h-screen flex bg-background text-text-main">
+    <!-- Sidebar -->
+    <aside 
+      class="flex-shrink-0 bg-[#0a0a0a] border-r border-border transition-all duration-300 flex flex-col"
+      :class="isSidebarOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden'"
+    >
+      <div class="p-4 border-b border-border flex items-center justify-between">
+        <span class="font-bold text-xs text-text-muted uppercase tracking-wider font-mono">Investigations</span>
+        <button @click="createNewSession" class="p-1.5 hover:bg-surface-highlight rounded-md transition-colors text-primary" title="New Chat">
+          <Icon icon="lucide:plus" class="w-4 h-4" />
+        </button>
+      </div>
+      
+      <div class="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+        <button
+          v-for="session in sessions"
+          :key="session.id"
+          @click="selectSession(session.id)"
+          class="w-full text-left px-3 py-3 rounded-lg text-sm truncate transition-colors group relative border border-transparent"
+          :class="currentSessionId === session.id ? 'bg-surface-highlight text-primary border-primary/20' : 'text-text-muted hover:bg-surface-highlight/50 hover:text-text-main'"
+        >
+          <div class="flex items-center gap-2">
+            <Icon icon="lucide:message-square" class="w-4 h-4 flex-shrink-0 opacity-70" />
+            <span class="truncate flex-1 font-mono text-xs">{{ session.title }}</span>
+            
+            <div 
+              @click.stop="deleteSession(session.id, $event)"
+              class="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-900/20 hover:text-red-400 rounded transition-all absolute right-2 bg-surface-highlight shadow-sm"
+            >
+              <Icon icon="lucide:trash-2" class="w-3.5 h-3.5" />
+            </div>
+          </div>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col min-w-0 relative">
+      <!-- Header -->
+      <header class="h-16 border-b border-border flex items-center px-6 justify-between bg-surface/50 backdrop-blur">
+        <div class="flex items-center gap-4">
+          <button @click="isSidebarOpen = !isSidebarOpen" class="hover:text-primary transition-colors text-text-muted">
+            <Icon icon="lucide:panel-left" class="w-5 h-5" />
+          </button>
+          <div class="h-6 w-px bg-border"></div>
+          <button @click="goBack" class="hover:text-primary transition-colors">
           <Icon icon="lucide:arrow-left" class="w-6 h-6" />
         </button>
         <h1 class="font-bold text-lg text-primary">CodeManus 侦探</h1>
@@ -356,6 +492,7 @@ const goBack = () => router.push('/');
           DISPATCH
         </button>
       </div>
+    </div>
     </div>
   </div>
 </template>
