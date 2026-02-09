@@ -9,7 +9,20 @@ const input = ref('');
 const events = ref<any[]>([]);
 const isStreaming = ref(false);
 
-const sendMessage = () => {
+  const quickActions = [
+    { label: 'Search Web', desc: 'Find latest tech info', icon: 'lucide:globe', prompt: 'Search the web for the latest news on...' },
+    { label: 'Analyze Repo', desc: 'Understand code structure', icon: 'lucide:file-code', prompt: 'Analyze the current project structure...' },
+    { label: 'Debug Issue', desc: 'Trace errors & fix bugs', icon: 'lucide:bug', prompt: 'Help me debug this error...' },
+    { label: 'Explain Concept', desc: 'Deep dive into topics', icon: 'lucide:book-open', prompt: 'Explain how React hooks work...' }
+  ];
+
+  const useQuickAction = (action: any) => {
+    input.value = action.prompt;
+    const inputEl = document.querySelector('input[type="text"]') as HTMLInputElement;
+    if (inputEl) inputEl.focus();
+  };
+  
+  const sendMessage = () => {
   if (!input.value.trim() || isStreaming.value) return;
 
   const userMsg = input.value;
@@ -184,9 +197,37 @@ const goBack = () => router.push('/');
     <!-- Chat Area -->
     <div class="chat-container flex-1 overflow-y-auto p-6">
       <div class="max-w-4xl mx-auto space-y-6 h-full flex flex-col">
-        <div v-if="events.length === 0" class="flex-1 flex flex-col items-center justify-center text-text-muted opacity-50">
-          <Icon icon="lucide:bot" class="w-16 h-16 mb-4 text-primary" />
-          <p>I can search the web and run tools.</p>
+        
+        <!-- Welcome Screen -->
+        <div v-if="events.length === 0" class="flex-1 flex flex-col items-center justify-center -mt-20">
+           <div class="mb-8 relative">
+              <div class="absolute inset-0 bg-primary/20 blur-3xl rounded-full"></div>
+              <Icon icon="lucide:bot" class="w-20 h-20 text-primary relative z-10" />
+           </div>
+           
+           <h2 class="text-4xl font-bold text-white mb-3 tracking-tight">
+             CodeManus <span class="text-primary">Detective</span>
+           </h2>
+           <p class="text-text-muted text-lg mb-12 max-w-md text-center">
+             Your autonomous AI agent for deep investigation, coding tasks, and technical research.
+           </p>
+
+           <div class="grid grid-cols-2 gap-4 w-full max-w-2xl">
+             <button 
+               v-for="(action, idx) in quickActions" 
+               :key="idx"
+               @click="useQuickAction(action)"
+               class="flex flex-col gap-2 p-5 rounded-xl bg-surface border border-border/50 hover:border-primary/50 hover:bg-surface-highlight transition-all text-left group"
+             >
+               <div class="flex items-center gap-3 mb-1">
+                 <div class="p-2 rounded-lg bg-surface-highlight group-hover:bg-primary/10 transition-colors">
+                   <Icon :icon="action.icon" class="w-5 h-5 text-primary" />
+                 </div>
+                 <span class="font-medium text-text-main">{{ action.label }}</span>
+               </div>
+               <span class="text-xs text-text-muted pl-1">{{ action.desc }}</span>
+             </button>
+           </div>
         </div>
 
         <div v-for="(evt, idx) in events" :key="idx" class="animate-fade-in">
