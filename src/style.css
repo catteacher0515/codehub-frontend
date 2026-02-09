@@ -29,3 +29,49 @@ body {
 .btn-primary {
   @apply px-4 py-2 bg-primary text-black font-bold rounded hover:bg-white transition-colors duration-200;
 }
+
+/* Markdown Styles */
+.prose {
+  @apply text-sm leading-normal;
+}
+.prose br {
+  display: none; /* Aggressively hide br tags if they are causing double spacing */
+}
+.prose h1, .prose h2, .prose h3 {
+  @apply text-white font-bold mt-3 mb-1 first:mt-0;
+}
+.prose p {
+  @apply mb-1.5 text-text-main last:mb-0;
+}
+.prose ul {
+  @apply list-disc list-inside mb-1.5 pl-2 last:mb-0;
+}
+.prose ol {
+  @apply list-decimal list-inside mb-1.5 pl-2 last:mb-0;
+}
+.prose li {
+  @apply mb-0;
+}
+.prose a {
+  @apply text-primary hover:underline;
+}
+.prose strong {
+  @apply font-bold text-white;
+}
+.prose code {
+  @apply bg-surface-highlight px-1 py-0.5 rounded text-primary font-mono text-xs;
+}
+.prose pre {
+  @apply my-2 rounded-lg overflow-hidden bg-[#1e1e1e] border border-border last:mb-0;
+}
+.prose pre code {
+  @apply bg-transparent p-3 block text-xs overflow-x-auto text-text-main;
+}
+
+/* Code Block Header */
+.hljs-wrapper .code-header {
+  @apply flex justify-between items-center px-4 py-2 bg-[#2d2d2d] border-b border-border text-xs text-text-muted font-mono;
+}
+.hljs-wrapper .copy-btn {
+  @apply hover:text-white transition-colors cursor-pointer;
+}

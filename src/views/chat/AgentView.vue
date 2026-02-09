@@ -2,6 +2,7 @@
 import { ref, nextTick } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useRouter } from 'vue-router';
+import { renderMarkdown } from '@/utils/markdown';
 
 const router = useRouter();
 const input = ref('');
@@ -140,8 +141,8 @@ const goBack = () => router.push('/');
               <Icon v-else icon="lucide:sparkles" class="w-5 h-5 text-primary" />
               
             </div>
-            <div class="max-w-[80%] text-text-main leading-relaxed">
-              {{ evt.data.content || evt.data }}
+            <div class="max-w-[80%] text-text-main prose">
+              <div v-html="renderMarkdown(evt.data.content || evt.data)"></div>
             </div>
           </div>
 
@@ -188,5 +189,35 @@ const goBack = () => router.push('/');
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Force Tight Typography via Deep Selector */
+:deep(.prose p) {
+  margin-bottom: 0.5em !important;
+}
+:deep(.prose p:last-child) {
+  margin-bottom: 0 !important;
+}
+:deep(.prose ul), :deep(.prose ol) {
+  margin-bottom: 0.5em !important;
+  padding-left: 1.2em !important;
+}
+:deep(.prose li) {
+  margin-bottom: 0 !important;
+}
+/* Fix loose list spacing: remove margin from paragraphs inside list items */
+:deep(.prose li p) {
+  margin: 0 !important;
+}
+:deep(.prose h1), :deep(.prose h2), :deep(.prose h3) {
+  margin-top: 1em !important;
+  margin-bottom: 0.5em !important;
+}
+:deep(.prose h1:first-child), :deep(.prose h2:first-child), :deep(.prose h3:first-child) {
+  margin-top: 0 !important;
+}
+:deep(.prose pre) {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
 }
 </style>

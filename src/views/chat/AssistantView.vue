@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { Icon } from '@iconify/vue';
 import { useRouter } from 'vue-router';
+import { renderMarkdown } from '@/utils/markdown';
 
 const router = useRouter();
 const input = ref('');
 const messages = ref<{role: 'user'|'assistant', content: string}[]>([]);
 const isStreaming = ref(false);
+
+// Helper to check if a message should be rendered as Markdown
+const isMarkdown = (role: string) => role === 'assistant';
 
 const sendMessage = () => {
   if (!input.value.trim() || isStreaming.value) return;
@@ -29,7 +33,10 @@ const sendMessage = () => {
   };
 
   eventSource.onerror = (err) => {
-    console.error('SSE Error:', err);
+    // Only log actual errors, not normal close events
+    if (eventSource.readyState !== EventSource.CLOSED) {
+      console.error('SSE Error:', err);
+    }
     eventSource.close();
     isStreaming.value = false;
   };
@@ -160,9 +167,12 @@ const goBack = () => router.push('/');
             </template>
 
           </div>
-          <div class="max-w-[80%] p-4 rounded-lg whitespace-pre-wrap leading-relaxed font-mono text-sm"
-            :class="msg.role === 'user' ? 'bg-surface-highlight border border-border' : 'bg-transparent'">
-            {{ msg.content }}
+          <div class="max-w-[80%] p-4 rounded-lg whitespace-pre-wrap font-mono text-sm"
+            :class="msg.role === 'user' ? 'bg-surface-highlight border border-border leading-relaxed' : 'bg-transparent prose'">
+            
+            <div v-if="isMarkdown(msg.role)" v-html="renderMarkdown(msg.content)"></div>
+            <template v-else>{{ msg.content }}</template>
+            
           </div>
         </div>
       </div>
@@ -189,3 +199,44 @@ const goBack = () => router.push('/');
     </div>
   </div>
 </template>
+
+<style scoped>
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+  opacity: 0;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); } 
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Force Tight Typography via Deep Selector */
+:deep(.prose p) {
+  margin-bottom: 0.5em !important;
+}
+:deep(.prose p:last-child) {
+  margin-bottom: 0 !important;
+}
+:deep(.prose ul), :deep(.prose ol) {
+  margin-bottom: 0.5em !important;
+  padding-left: 1.2em !important;
+}
+:deep(.prose li) {
+  margin-bottom: 0 !important;
+}
+/* Fix loose list spacing: remove margin from paragraphs inside list items */
+:deep(.prose li p) {
+  margin: 0 !important;
+}
+:deep(.prose h1), :deep(.prose h2), :deep(.prose h3) {
+  margin-top: 1em !important;
+  margin-bottom: 0.5em !important;
+}
+:deep(.prose h1:first-child), :deep(.prose h2:first-child), :deep(.prose h3:first-child) {
+  margin-top: 0 !important;
+}
+:deep(.prose pre) {
+  margin-top: 0.5em !important;
+  margin-bottom: 0.5em !important;
+}
+</style>
