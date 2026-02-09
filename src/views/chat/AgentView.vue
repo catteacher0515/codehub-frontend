@@ -37,6 +37,24 @@ const sendMessage = () => {
 
   eventSource.addEventListener('ACTION', (e) => {
     const data = JSON.parse(e.data);
+    
+    // Check for terminate tool
+    if (data.tool === 'terminate') {
+      try {
+        // arguments might be an object or a JSON string
+        const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
+        
+        if (args && args.reason) {
+          // Push the final answer directly
+          pushEvent('ANSWER', { content: args.reason });
+        }
+      } catch (err) {
+        console.error('Failed to parse terminate args:', err);
+      }
+      // Do NOT push the ACTION event for terminate to hide it from UI
+      return;
+    }
+
     pushEvent('ACTION', data);
   });
 
@@ -51,14 +69,20 @@ const sendMessage = () => {
   });
 
   eventSource.addEventListener('ERROR', (e) => {
-    const data = JSON.parse(e.data);
+    // Some error events might be plain text
+    let data = e.data;
+    try { data = JSON.parse(e.data); } catch (_) {}
+    
     pushEvent('ERROR', data);
     eventSource.close();
     isStreaming.value = false;
   });
 
   eventSource.onerror = (err) => {
-    console.error('SSE Error:', err);
+    // Only log actual errors, not normal close events
+    if (eventSource.readyState !== EventSource.CLOSED) {
+      console.error('SSE Error:', err);
+    }
     eventSource.close();
     isStreaming.value = false;
   };
